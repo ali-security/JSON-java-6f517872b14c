@@ -35,7 +35,9 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.io.Reader;
 import java.io.StringReader;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 
 import org.json.JSONArray;
@@ -43,6 +45,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 import org.json.XML;
 import org.json.XMLParserConfiguration;
+import org.json.XMLXsiTypeConverter;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -1070,6 +1073,167 @@ public class XMLConfigurationTest {
         JSONObject expetedJsonObject = new JSONObject(expectedStr);
 
         Util.compareActualVsExpectedJsonObjects(jsonObject, expetedJsonObject);
+    }
+
+    @Test
+    public void testMaxNestingDepthIsSet() {
+        XMLParserConfiguration xmlParserConfiguration = XMLParserConfiguration.ORIGINAL;
+
+        assertEquals(xmlParserConfiguration.getMaxNestingDepth(), XMLParserConfiguration.DEFAULT_MAXIMUM_NESTING_DEPTH);
+
+        xmlParserConfiguration = xmlParserConfiguration.withMaxNestingDepth(42);
+
+        assertEquals(xmlParserConfiguration.getMaxNestingDepth(), 42);
+
+        xmlParserConfiguration = xmlParserConfiguration.withMaxNestingDepth(0);
+
+        assertEquals(xmlParserConfiguration.getMaxNestingDepth(), 0);
+
+        xmlParserConfiguration = xmlParserConfiguration.withMaxNestingDepth(-31415926);
+
+        assertEquals(xmlParserConfiguration.getMaxNestingDepth(), XMLParserConfiguration.UNDEFINED_MAXIMUM_NESTING_DEPTH);
+
+        xmlParserConfiguration = xmlParserConfiguration.withMaxNestingDepth(Integer.MIN_VALUE);
+
+        assertEquals(xmlParserConfiguration.getMaxNestingDepth(), XMLParserConfiguration.UNDEFINED_MAXIMUM_NESTING_DEPTH);
+    }
+
+    @Test
+    public void testMaxNestingDepthSurvivesFurtherConfiguration() {
+        final XMLParserConfiguration limited = XMLParserConfiguration.ORIGINAL.withMaxNestingDepth(42);
+        final Set<String> forceList = new HashSet<String>();
+        forceList.add("a");
+        final Map<String, XMLXsiTypeConverter<?>> xsiTypeMap = new HashMap<String, XMLXsiTypeConverter<?>>();
+        xsiTypeMap.put("string", new XMLXsiTypeConverter<String>() {
+            @Override public String convert(final String value) {
+                return value;
+            }
+        });
+
+        assertEquals(42, limited.withKeepStrings(true).getMaxNestingDepth());
+        assertEquals(42, limited.withcDataTagName("altContent").getMaxNestingDepth());
+        assertEquals(42, limited.withConvertNilAttributeToNull(true).getMaxNestingDepth());
+        assertEquals(42, limited.withXsiTypeMap(xsiTypeMap).getMaxNestingDepth());
+        assertEquals(42, limited.withForceList(forceList).getMaxNestingDepth());
+        assertEquals(42, limited.withKeepStrings(true).withcDataTagName("altContent")
+            .withConvertNilAttributeToNull(true).withXsiTypeMap(xsiTypeMap)
+            .withForceList(forceList).getMaxNestingDepth());
+
+        assertTrue(XMLParserConfiguration.KEEP_STRINGS.withMaxNestingDepth(42).isKeepStrings());
+        assertEquals(XMLParserConfiguration.DEFAULT_MAXIMUM_NESTING_DEPTH,
+            XMLParserConfiguration.KEEP_STRINGS.getMaxNestingDepth());
+        assertEquals(XMLParserConfiguration.DEFAULT_MAXIMUM_NESTING_DEPTH,
+            new XMLParserConfiguration().withKeepStrings(true).withForceList(forceList).getMaxNestingDepth());
+    }
+
+    @Test
+    public void testMaxNestingDepthIsEnforcedAfterFurtherConfiguration() {
+        final String wayTooLongMalformedXML = new String(new char[6000]).replace("\0", "<a>");
+        final Set<String> forceList = new HashSet<String>();
+        forceList.add("a");
+        final XMLParserConfiguration config = XMLParserConfiguration.ORIGINAL
+            .withMaxNestingDepth(42)
+            .withKeepStrings(true)
+            .withcDataTagName("altContent")
+            .withConvertNilAttributeToNull(true)
+            .withForceList(forceList);
+
+        try {
+            XML.toJSONObject(wayTooLongMalformedXML, config);
+
+            fail("Expecting a JSONException");
+        } catch (JSONException e) {
+            assertTrue("Wrong throwable thrown: not expecting message <" + e.getMessage() + ">",
+                e.getMessage().startsWith("Maximum nesting depth of 42"));
+        }
+    }
+
+    @Test
+    public void testDefaultMaxNestingDepthIsEnforcedWithKeepStringsConfig() {
+        assertDefaultMaxNestingDepthIsEnforced(new Runnable() {
+            @Override
+            public void run() {
+                XML.toJSONObject(DEEPLY_NESTED_XML, XMLParserConfiguration.KEEP_STRINGS);
+            }
+        });
+    }
+
+    @Test
+    public void testDefaultMaxNestingDepthIsEnforcedWithNewConfig() {
+        assertDefaultMaxNestingDepthIsEnforced(new Runnable() {
+            @Override
+            public void run() {
+                XML.toJSONObject(DEEPLY_NESTED_XML, new XMLParserConfiguration());
+            }
+        });
+    }
+
+    @Test
+    public void testDefaultMaxNestingDepthIsEnforcedAfterFurtherConfiguration() {
+        final Set<String> forceList = new HashSet<String>();
+        forceList.add("a");
+        final XMLParserConfiguration config = new XMLParserConfiguration()
+            .withKeepStrings(true)
+            .withcDataTagName("altContent")
+            .withConvertNilAttributeToNull(true)
+            .withForceList(forceList);
+        assertDefaultMaxNestingDepthIsEnforced(new Runnable() {
+            @Override
+            public void run() {
+                XML.toJSONObject(DEEPLY_NESTED_XML, config);
+            }
+        });
+        assertDefaultMaxNestingDepthIsEnforced(new Runnable() {
+            @Override
+            public void run() {
+                XML.toJSONObject(new StringReader(DEEPLY_NESTED_XML), config);
+            }
+        });
+    }
+
+    @SuppressWarnings("deprecation")
+    @Test
+    public void testDefaultMaxNestingDepthIsEnforcedWithDeprecatedConstructors() {
+        assertEquals(XMLParserConfiguration.DEFAULT_MAXIMUM_NESTING_DEPTH,
+            new XMLParserConfiguration(true).getMaxNestingDepth());
+        assertEquals(XMLParserConfiguration.DEFAULT_MAXIMUM_NESTING_DEPTH,
+            new XMLParserConfiguration("altContent").getMaxNestingDepth());
+        assertEquals(XMLParserConfiguration.DEFAULT_MAXIMUM_NESTING_DEPTH,
+            new XMLParserConfiguration(true, "altContent").getMaxNestingDepth());
+        assertEquals(XMLParserConfiguration.DEFAULT_MAXIMUM_NESTING_DEPTH,
+            new XMLParserConfiguration(true, "altContent", true).getMaxNestingDepth());
+
+        assertDefaultMaxNestingDepthIsEnforced(new Runnable() {
+            @Override
+            public void run() {
+                XML.toJSONObject(DEEPLY_NESTED_XML, new XMLParserConfiguration(true, "altContent", true));
+            }
+        });
+    }
+
+    /**
+     * A document of never-closed nested tags (CVE-2022-45688). It is far deeper
+     * than the default maximum nesting depth of 512, and deep enough to overflow
+     * even the large stack of {@link Util#throwableFromLargeStack(Runnable)} if
+     * that limit were not enforced.
+     */
+    private static final String DEEPLY_NESTED_XML = new String(new char[200000]).replace("\0", "<a>");
+
+    /**
+     * Runs the given parse on a large stack and asserts that it was stopped by
+     * the default maximum nesting depth of 512.
+     * @param parse parses {@link #DEEPLY_NESTED_XML} with a configuration that
+     *     keeps the default maximum nesting depth
+     */
+    private static void assertDefaultMaxNestingDepthIsEnforced(Runnable parse) {
+        Throwable thrown = Util.throwableFromLargeStack(parse);
+        if (thrown == null) {
+            fail("Expecting a JSONException");
+        }
+        assertTrue("Wrong throwable thrown: not expecting <" + thrown + ">",
+            thrown instanceof JSONException);
+        assertTrue("Wrong throwable thrown: not expecting message <" + thrown.getMessage() + ">",
+            thrown.getMessage().startsWith("Maximum nesting depth of 512"));
     }
     
     /**
